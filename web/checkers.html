@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title></title>
+  <style>
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: black;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    border: 1px solid white;
+  }
+  </style>
+</head>
+<body>
+<canvas width="800" height="800" id="game"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.3.0/lodash.js"></script>
+<script>
+  BOARD_SIZE = 8;
+  CELL_SIZE = 100;
+  RADIUS = 30;
+  BACK_COLORS = [`rgb(227, 209, 197)`, `rgb(150, 104, 75)`];
+  FIGURE_COLORS = [`rgb(59, 25, 2)`, `rgb(212, 183, 163)`];
+  HIGHLIGHT_COLOR = `rgb(240, 237, 105)`;
+  QUEEN_COLOR = `rgb(227, 116, 39)`;
+
+  canvas = document.getElementById('game');
+  context = canvas.getContext('2d');
+
+  function randomChoice(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+  }
+
+  // ******************* MCTS 
+  function Node(env, action=null, reward=0, done=false, parent=null) {
+    this.env = env;
+    this.action = action;
+    this.reward = reward;
+    this.done = done;
+    this.parent = parent;
+    this.n = 0;
+    this.total_reward = 0;
+    this.children = [];
+
+
+    this.value = function() {
+      return this.total_reward / this.n;
+    }
+
+    this.select_leaf = function() {
+      if (this.children.length == 0) {
+        return this;
+      } else {
+        return randomChoice(this.children).select_leaf();
+      }
+    }
+
+    this.expand = function() {
+      for (let action of this.env.legal_actions()) {
+        let next_env = _.cloneDeep(this.env);
+        let [next_observation, reward, done] = next_env.step(action);
+        this.children.push(new Node(next_env, action, reward, done, this));
+      }
+      return randomChoice(this.children);
+    }
+
+    this.rollout = function() {
+      let player = null;
+      let done = this.done;
+      let reward = this.reward;
+      let env = _.cloneDeep(this.env);
+      while (!done) {
+        let action = randomChoice(env.legal_actions());
+        [player, reward, done] = env.step(action);
+      }
+      return reward;
+    }
+
+    this.backprop = function(reward) {
+      this.total_reward += reward;
+      this.n += 1;
+      if (this.parent != null) {
+        this.parent.backprop(reward);
+      }
+    }
+
+  }
+
+  function MCTSAgent(num_trials=50) {
+    this.is_human = false;
+    this.num_trials = num_trials;
+
+    this.act = function(env) {
+      let [player, board] = env.observation();
+      let is_max = (player == 0);
+      
+      let root = new Node(env);
+      root.expand();
+
+      let best_reward = is_max ? -Infinity : Infinity;
+      let best_action = null;
+
+      for (let child of root.children) {
+        for (let i = 0; i < this.num_trials; i++) {
+          let leaf = child.select_leaf();
+          if (!leaf.done) {
+            leaf = leaf.expand();
+          }
+          leaf.backprop(leaf.rollout());
+        }
+
+        let candidate_reward = child.value();
+
+        if ((is_max && (candidate_reward > best_reward)) ||
+            ((!is_max) && (candidate_reward < best_reward))) {
+          best_reward = candidate_reward;
+          best_action = child.action;
+        }
+      }
+
+      return best_action;
+    }
+  }
+  // ******************* MCTS 
+
+
+  // ******************* Checkers
+  function sign(x) {
+    return x >= 0 ? 1 : -1;
+  }
+
+  function Checkers() {
+    this.reset = function() {
+      this.board = [
+        [0, 2, 0, 2, 0, 2, 0, 2],
+        [2, 0, 2, 0, 2, 0, 2, 0],
+        [0, 2, 0, 2, 0, 2, 0, 2],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [1, 0, 1, 0, 1, 0, 1, 0],
+        [0, 1, 0, 1, 0, 1, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 0]
+      ];      
+      this.player = 1
+      this.must_i = null
+      this.must_j = null
+    }
+
+    this.display = function(highlight=null) {
+      for (let i = 0; i < BOARD_SIZE; i++) {
+        for (let j = 0; j < BOARD_SIZE; j++) {
+          let x = j * CELL_SIZE;
+          let y = i * CELL_SIZE;
+          context.fillStyle = BACK_COLORS[(i + j) % 2];
+          context.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+          if (this.board[i][j] != 0) {
+            context.beginPath();
+            context.arc(x + CELL_SIZE / 2, y + CELL_SIZE / 2, RADIUS, 0, 2 * Math.PI, false);
+            context.fillStyle = FIGURE_COLORS[this.board[i][j] % 2];
+            context.fill();
+            if (this.board[i][j] > 2) {
+              context.lineWidth = 5;
+              context.strokeStyle = QUEEN_COLOR;
+              context.stroke();
+            }
+          }
+        }
+      }
+      if (highlight != null) {
+        let x = highlight[1] * CELL_SIZE;
+        let y = highlight[0] * CELL_SIZE;
+        context.beginPath();
+        context.lineWidth = '5';
+        context.strokeStyle = HIGHLIGHT_COLOR;
+        context.rect(x, y, CELL_SIZE, CELL_SIZE);
+        context.stroke();
+      }
+    }
+
+    this.observation = function() {
+      return [this.player - 1, this.board]
+    }
+
+    this.is_valid = function(i, j) {
+      return (i >= 0 && i < BOARD_SIZE && j >= 0 && j < BOARD_SIZE);
+    }
+
+    this.is_empty = function(i, j) {
+      return this.is_valid(i, j) && this.board[i][j] == 0;
+    }
+
+    this.is_self = function(i, j) {
+      return this.is_valid(i, j) && this.board[i][j] != 0 && this.board[i][j] % 2 == this.player % 2;
+    }
+
+    this.is_opponent = function(i, j) {
+      return this.is_valid(i, j) && this.board[i][j] != 0 && this.board[i][j] % 2 != this.player % 2;
+    }
+
+    this.is_capture = function(i, j, di, dj, p) {
+      if (!this.is_empty(i + p * di, j + p * dj)) {
+        return false;
+      }
+      let has_opponent = false;
+      for (let k = 1; k < p; k++) {
+        let ni = i + k * di
+        let nj = j + k * dj
+        if (this.board[ni][nj] == 0) {
+          continue
+        } else if (this.is_opponent(ni, nj)) {
+          if (has_opponent) {
+            return false;
+          } else {
+            has_opponent = true;
+          }
+        }
+        else {
+          return false;
+        }
+      }
+      return has_opponent    
+    }
+
+    this.is_legal_simple = function(i, j, di, dj, p) {
+      if (!this.is_empty(i + p * di, j + p * dj)) {
+        return false;
+      }
+      for (let k = 1; k < p; k++) {
+        let ni = i + k * di
+        let nj = j + k * dj
+        if (!this.board[ni][nj] == 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    this.can_capture = function(i, j) {
+      k = 1;
+      let is_simple = this.board[i][j] == this.player;
+      if (!is_simple) {
+        k = BOARD_SIZE; 
+      }
+      for (let di of [-1, 1]) {
+        for (let dj of [-1, 1]) {
+          for (let p = 2; p < 2 + k; p++) {
+            if (this.is_capture(i, j, di, dj, p)) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;    
+    }
+
+    this.legal_actions = function() {
+      let capture_only = false;
+      let legal = [];
+      let valid_di = this.player == 1 ? -1 : 1;
+      for (let i = 0; i < BOARD_SIZE; i++) {
+        for (let j = 0; j < BOARD_SIZE; j++) {
+          if (this.must_i != null && (this.must_i != i || this.must_j != j)) {
+            continue;
+          }
+          if (this.board[i][j] == 0 || this.board[i][j] % 2 != (this.player % 2)) {
+            continue;
+          }
+          let k = 1;
+          let is_simple = (this.board[i][j] == this.player);
+          if (!is_simple) {
+            k = BOARD_SIZE;
+          }
+          for (let di of [-1, 1]) {
+            for (let dj of [-1, 1]) {
+              // check captures
+              for (let p = 2; p < 2 + k; p++) {
+                if (this.is_capture(i, j, di, dj, p)) {
+                  let move = [i, j, i + p * di, j + p * dj]
+                  if (!capture_only) {
+                    capture_only = true;
+                    legal = [move]
+                  } else {
+                    legal.push(move)
+                  }
+                }
+              }
+
+              // check simple moves
+              if (!capture_only) {
+                for (let p = 1; p < k + 1; p++) {
+                  if (is_simple && di != valid_di) {
+                    continue;
+                  }
+                  if (this.is_legal_simple(i, j, di, dj, p)) {
+                    legal.push([i, j, i + p * di, j + p * dj]);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      return legal;
+    }
+
+    this.step = function(action) {
+      this.must_i = null;
+      this.must_j = null;
+      let [i, j, ni, nj] = action;
+
+      this.board[ni][nj] = this.board[i][j];
+      this.board[i][j] = 0;
+
+      // make queen
+      if ((this.player % 2 == 1 && ni == 0) || (this.player % 2 == 0 && ni == 7)) {
+        this.board[ni][nj] = this.player + 2;
+      }
+
+      let di = sign(ni - i);
+      let dj = sign(nj - j);
+
+      let has_capture = false;
+      let ti = i + di;
+      let tj = j + dj;
+      while (ti != ni) {
+        if (this.board[ti][tj] != 0) {
+          has_capture = true;
+          this.board[ti][tj] = 0;
+          break;
+        }
+        ti += di;
+        tj += dj;
+      }
+
+      let reward = 0;
+      let done = this.is_finished();
+      if (done) {
+        reward = this.player == 1 ? 1 : -1;
+      }
+
+      if (has_capture && this.can_capture(ni, nj)) {
+        this.must_i = ni;
+        this.must_j = nj;
+      } else {
+        this.player = 1 + (this.player % 2);
+      }
+      return [this.player - 1, reward, done];
+    }
+
+    this.is_finished = function() {
+      this.player = 1 + (this.player % 2);
+      let done = this.legal_actions().length == 0;
+      this.player = 1 + (this.player % 2);
+      return done;
+    }
+
+    this.reset();
+  }
+  // ******************* Checkers
+
+  function getCursorPosition(canvas, event) {
+      const rect = canvas.getBoundingClientRect()
+      const x = event.clientX - rect.left
+      const y = event.clientY - rect.top
+      return [x, y];
+  }  
+
+  canvas.addEventListener('click', function(e) {
+    if (!agents[player].is_human) {
+      return;
+    }
+    let legal = game.legal_actions().map(x => x.toString());
+
+    let [x, y] = getCursorPosition(canvas, e);
+    let i = Math.floor(y / CELL_SIZE);
+    let j = Math.floor(x / CELL_SIZE);
+    if (!game.is_valid(i, j)) {
+      return;
+    }
+
+    if (game.is_self(i, j)) {
+      src = [i, j];
+      dst = null;
+      game.display(highlight=src);
+    } else if (src != null && game.is_empty(i, j)) {
+      dst = [i, j];
+    }
+
+    if (src != null && dst != null) {
+      let move = [src[0], src[1], dst[0], dst[1]]
+      if (legal.includes(move.toString())) {
+        human_action = move;
+      }
+    }
+  })
+
+  function HumanAgent() {
+    this.is_human = true;
+    this.act = function(env) {
+      return human_action;
+    }
+  }
+
+  let game = new Checkers();
+  game.reset();
+  game.display();
+  // let agents = [new HumanAgent(), new MCTSAgent(100)];
+  let agents = [new HumanAgent(), new HumanAgent()];
+  let player = 0;
+
+  let human_action = null;
+  let src = null;
+  let dst = null;
+
+  function update() {
+    if (!agents[player].is_human || human_action != null) {
+      action = agents[player].act(game);
+      human_action = null;
+      src = null;
+      dst = null;
+      [player, reward, done] = game.step(action);
+      // console.log([player, reward, done]);
+      // console.log(game.legal_actions());
+      game.display();
+    }
+  }
+
+  function loop(timestamp) {
+    update()
+    window.requestAnimationFrame(loop)
+  }
+  window.requestAnimationFrame(loop)
+
+</script>
+</body>
+</html>
