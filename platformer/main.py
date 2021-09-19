@@ -14,6 +14,9 @@ FPS = 60
 pygame.init()
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 
+def round_to_multiple(x, k):
+  return (int(x) // k) * k
+
 class SceneObject:
   def draw(self):
     pass
@@ -45,18 +48,18 @@ class Platform(SceneObject):
 
 
 @dataclass
-class Ball(SceneObject):
+class Hero(SceneObject):
   x: float
   y: float
+  radius: float = 20
   dx: float = 0
   dy: float = 0
   color: tuple = (255, 140, 0)
-  speed: float = 8
-  radius: float = 20
+  speed: float = 10
 
   jump_event_id: int = pygame.USEREVENT + 1
   jump_time_ms: float = 100
-  jump_speed: float = 20
+  jump_speed: float = 30
 
   fall_speed: float = 10
 
@@ -78,6 +81,7 @@ class Ball(SceneObject):
         self.dy = 0
       else:
         self.dy -= self.jump_speed / 10
+        self.dy = max(self.dy, -self.fall_speed)
         pygame.time.set_timer(
           self.jump_event_id, int(self.jump_time_ms / 10), loops=1)
 
@@ -86,17 +90,18 @@ class Ball(SceneObject):
     for p in platforms:
       if ((self.x >= p.x) and
           (self.x <= p.x + p.w)):
-        if (math.fabs(self.y - self.radius - (p.y + p.h)) <= 2):
+        if (int(self.y - self.radius) == int(p.y)):
           self.on_platform = True
-        elif (math.fabs(self.y + self.radius - p.y) <= 2):
+        elif self.is_jumping and self.y + self.radius - self.dy <= p.y - p.h and p.y - p.h <= self.y + self.radius:
           self.hit_platform = True
 
     if self.hit_platform and self.dy > 0:
       self.dy = 0
+      self.dx = 0
       self.hit_platform = False
 
     if self.on_platform:
-      if self.is_jumping and self.dy < 0:
+      if self.is_jumping and self.dy <= 0:
         self.dy = 0
         self.is_jumping = False
     elif not self.is_jumping:
@@ -117,8 +122,10 @@ class Ball(SceneObject):
     if event.type == self.jump_event_id: self.handle_jump()
 
   def move(self):
-    self.x += int(self.dx)
-    self.y += int(self.dy)
+    self.x += self.dx
+    self.y += self.dy
+    self.x = round_to_multiple(self.x, 10)
+    self.y = round_to_multiple(self.y, 10)
     self.y = max(self.y, self.radius)
     self.y = min(self.y, HEIGHT - self.radius)
     self.x = max(self.x, self.radius)
@@ -133,14 +140,14 @@ def main():
   done = False
   clock = pygame.time.Clock()
 
-  ball = Ball(Ball.radius, Ball.radius)
-  platforms = [Platform(100, 70, 300, 5), Platform(500, 150, 200, 10)]
-  objects = [ball] + platforms
+  hero = Hero(Hero.radius, Hero.radius)
+  platforms = [Platform(100, 50, 300, 20), Platform(500, 150, 200, 20)]
+  objects = [hero] + platforms
 
   while not done:
     SCREEN.fill((0, 0, 0))
 
-    ball.intersect(platforms)
+    hero.intersect(platforms)
 
     for obj in objects:
       obj.draw()
