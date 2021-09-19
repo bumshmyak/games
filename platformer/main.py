@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 WIDTH = 800
 HEIGHT = 600
+D = 10
 FPS = 60
 
 pygame.init()
@@ -37,7 +38,8 @@ class Platform(SceneObject):
 
   def draw(self):
     pygame.draw.rect(
-      SCREEN, self.color, pygame.Rect(self.x, HEIGHT - self.y, self.w, self.h))
+      SCREEN, self.color, pygame.Rect(
+        self.x, HEIGHT - (self.y + self.h), self.w, self.h))
 
   def intersects(self, other):
     return (
@@ -49,19 +51,20 @@ class Platform(SceneObject):
 
 @dataclass
 class Hero(SceneObject):
-  x: float
-  y: float
-  radius: float = 20
+  x: float = 0
+  y: float = 0
+  w: float = 3 * D
+  h: float = 3 * D
   dx: float = 0
   dy: float = 0
   color: tuple = (255, 140, 0)
-  speed: float = 10
+  speed: float = D
 
   jump_event_id: int = pygame.USEREVENT + 1
   jump_time_ms: float = 100
-  jump_speed: float = 30
+  jump_speed: float = 3 * D
 
-  fall_speed: float = 10
+  fall_speed: float = D
 
   on_platform: bool = False
   hit_platform: bool = False
@@ -76,35 +79,45 @@ class Hero(SceneObject):
 
   def handle_jump(self):
     if self.is_jumping:
-      if self.y <= self.radius or (self.on_platform and self.dy <= 0):
+      if self.y <= 0 or (self.on_platform and self.dy <= 0):
         self.is_jumping = False
         self.dy = 0
       else:
-        self.dy -= self.jump_speed / 10
-        self.dy = max(self.dy, -self.fall_speed)
+        self.dy = max(self.dy - self.jump_speed / 10, -self.fall_speed)
         pygame.time.set_timer(
           self.jump_event_id, int(self.jump_time_ms / 10), loops=1)
+
+  def intersects_x(self, p):
+    return segment_intersects(
+      (self.x + 1, self.x + self.w - 1), (p.x, p.x + p.w))
+
+  def intersects_y(self, p):
+    return segment_intersects(
+      (self.y + 1, self.y + self.h - 1), (p.y, p.y + p.h))
 
   def intersect(self, platforms):
     self.on_platform = False
     for p in platforms:
-      if ((self.x >= p.x) and
-          (self.x <= p.x + p.w)):
-        if (int(self.y - self.radius) == int(p.y)):
+      if self.intersects_y(p):
+        if self.x + self.w > p.x and self.x + self.w <= p.x + D:
+          self.dx = 0
+          self.x = p.x - self.w
+        elif self.x < p.x + p.w and self.x >= p.x + p.w - D:
+          self.dx = 0
+          self.x = p.x + p.w
+      if self.intersects_x(p):
+        if (self.y >= p.y + p.h and
+            self.y + self.dy <= p.y + p.h):
+          self.y = p.y + p.h
           self.on_platform = True
-        elif self.is_jumping and self.y + self.radius - self.dy <= p.y - p.h and p.y - p.h <= self.y + self.radius:
-          self.hit_platform = True
+          self.is_jumping = False
+          self.dy = 0
+        if (self.y + self.h <= p.y and
+            self.y + self.h + self.dy >= p.y):
+          self.y = p.y - self.h
+          self.dy = 0
 
-    if self.hit_platform and self.dy > 0:
-      self.dy = 0
-      self.dx = 0
-      self.hit_platform = False
-
-    if self.on_platform:
-      if self.is_jumping and self.dy <= 0:
-        self.dy = 0
-        self.is_jumping = False
-    elif not self.is_jumping:
+    if not (self.on_platform or self.is_jumping):
       self.dy = -self.fall_speed
 
   def keydown(self, key):
@@ -124,24 +137,25 @@ class Hero(SceneObject):
   def move(self):
     self.x += self.dx
     self.y += self.dy
-    self.x = round_to_multiple(self.x, 10)
-    self.y = round_to_multiple(self.y, 10)
-    self.y = max(self.y, self.radius)
-    self.y = min(self.y, HEIGHT - self.radius)
-    self.x = max(self.x, self.radius)
-    self.x = min(self.x, WIDTH - self.radius)
+    self.x = round_to_multiple(self.x, D)
+    self.y = round_to_multiple(self.y, D)
+    self.y = max(self.y, 0)
+    self.y = min(self.y, HEIGHT - self.h)
+    self.x = max(self.x, 0)
+    self.x = min(self.x, WIDTH - self.w)
 
   def draw(self):
     self.move()
-    pygame.draw.circle(SCREEN, self.color, (self.x, HEIGHT - self.y),
-                       self.radius, 0)
+    pygame.draw.rect(
+      SCREEN, self.color, pygame.Rect(
+        self.x, HEIGHT - (self.y + self.h), self.w, self.h))
 
 def main():
   done = False
   clock = pygame.time.Clock()
 
-  hero = Hero(Hero.radius, Hero.radius)
-  platforms = [Platform(100, 50, 300, 20), Platform(500, 150, 200, 20)]
+  hero = Hero()
+  platforms = [Platform(100, 30, 300, 20), Platform(500, 150, 200, 20)]
   objects = [hero] + platforms
 
   while not done:
